@@ -12,32 +12,11 @@ from dataset_loader import DrivingDataset
 from driving_policy import DiscreteDrivingPolicy
 from utils import DEVICE, str2bool
 
+from torch.nn import CrossEntropyLoss
 
-class Network(nn.Module):
-    def __init__(self, n_classes):
-        super().__init__()
-        self.img_size = 128
-        self.conv24 = nn.Conv2d(in_channels=3, out_channels=24, kernel_size=4, stride=2, padding=1)
-        self.conv36 = nn.Conv2d(in_channels=24, out_channels=36, kernel_size=4, stride=2, padding=1)
-        self.conv48 = nn.Conv2d(in_channels=36, out_channels=48, kernel_size=4, stride=2, padding=1)
-        self.conv64 = nn.Conv2d(in_channels=48, out_channels=64, kernel_size=4, stride=2, padding=1)
-        self.flatten = nn.Flatten()
 
-        self.fc_128 = nn.Linear(in_features=4096, out_features=128)
-        self.fc_64 = nn.Linear(in_features=128, out_features=64)
-        self.fc_n_classes = nn.Linear(in_features=64, out_features=n_classes)
-
-        self.relu = nn.ReLU()
-
-        self.conv_layer = nn.Sequential(self.conv24, self.relu, self.conv36, self.relu, self.conv48, self.relu,
-                                        self.conv64)
-        self.fc_layer = nn.Sequential(self.fc_128, self.relu, self.fc_64, self.relu, self.fc_n_classes)
-
-    def forward(self, x):
-        conv_output = self.conv_layer(x)
-        conv_output_flattened = self.flatten(conv_output)
-        output = self.fc_layer(conv_output_flattened)
-        return output
+def _cce_loss(weight=None):
+    return CrossEntropyLoss(weight=weight)
 
 
 def train_discrete(model, iterator, opt, args):
@@ -50,18 +29,39 @@ def train_discrete(model, iterator, opt, args):
     # Zero the accumulated gradient in the optimizer 
     # Compute the cross_entropy loss with and without weights  
     # Compute the derivatives of the loss w.r.t. network parameters
-    # Take a step in the approximate gradient direction using the optimizer opt  
+    # Take a step in the approximate gradient direction using the optimizer opt
 
     for i_batch, batch in enumerate(iterator):
+        img_batch, target_cmd_batch = batch['image'], batch['cmd']
+        if DEVICE.type == 'cuda':
+            img_batch = img_batch.cuda()
+            target_cmd_batch = target_cmd_batch.cuda()
+        opt.zero_grad()
+        if args.weighted_loss:
+            args.class_dist[np.nonzero(args.class_dist == 0.0)] = np.max(
+                args.class_dist)  # so we dont get inf for classes with zero occurance
+            weights = np.max(
+                args.class_dist) / args.class_dist # just inverse makes the weights too big. I wanted to scale it so it doesnt drastically change the learning rate
 
+            cce_loss = _cce_loss(weight=torch.Tensor(weights))
+        else:
+            cce_loss = _cce_loss(weight=None)
         #
         # YOUR CODE GOES HERE
         #
+        pred_cmd_batch = model(img_batch)
+        # print(target_cmd_batch.shape, pred_cmd_batch.shape)
+        loss = cce_loss(input=pred_cmd_batch, target=target_cmd_batch)
 
-        loss = loss.detach().cpu().numpy()
-        loss_hist.append(loss)
+        loss.backward()
 
-        PRINT_INTERVAL = int(len(iterator) / 3)
+        opt.step()
+
+        loss_np = loss.detach().cpu().numpy()
+        loss_hist.append(loss_np)
+
+        # PRINT_INTERVAL = int(len(iterator) / 3)
+        PRINT_INTERVAL = 1
         if (i_batch + 1) % PRINT_INTERVAL == 0:
             print('\tIter [{}/{} ({:.0f}%)]\tLoss: {}\t Time: {:10.3f}'.format(
                 i_batch, len(iterator),
@@ -100,7 +100,7 @@ def test_discrete(model, iterator, opt, args):
 
     avg_acc = np.asarray(acc_hist).mean()
 
-    print('\tVal: \tAcc: {}  Time: {:10.3f}'.format(
+    print('\tVal: \tAcc: {}%  Time: {:10.3f}'.format(
         avg_acc,
         time.time() - args.start_time,
     ))
@@ -113,7 +113,7 @@ def get_class_distribution(iterator, args):
     for i_batch, batch in enumerate(iterator):
         y = batch['cmd'].detach().numpy().astype(np.int32)
         class_dist[y] += 1
-
+    print(class_dist)
     return (class_dist / sum(class_dist))
 
 
@@ -133,8 +133,8 @@ def main(args):
                                         classes=args.n_steering_classes,
                                         transform=data_transform)
 
-    training_iterator = DataLoader(training_dataset, batch_size=args.batch_size, shuffle=True, num_workers=1)
-    validation_iterator = DataLoader(validation_dataset, batch_size=args.batch_size, shuffle=True, num_workers=1)
+    training_iterator = DataLoader(training_dataset, batch_size=args.batch_size, shuffle=True, num_workers=0)
+    validation_iterator = DataLoader(validation_dataset, batch_size=args.batch_size, shuffle=True, num_workers=0)
     driving_policy = DiscreteDrivingPolicy(n_classes=args.n_steering_classes).to(DEVICE)
 
     opt = torch.optim.Adam(driving_policy.parameters(), lr=args.lr)
@@ -145,10 +145,15 @@ def main(args):
     print(args)
 
     args.class_dist = get_class_distribution(training_iterator, args)
+    print(args.class_dist)
 
     best_val_accuracy = 0
+
+    opt = torch.optim.Adam(params=driving_policy.parameters(), lr=args.lr)
     for epoch in range(args.n_epochs):
         print('EPOCH ', epoch)
+        train_discrete(model=driving_policy, iterator=training_iterator, opt=opt, args=args)
+        test_discrete(model=driving_policy, iterator=validation_iterator, args=args, opt=None)
 
         #
         # YOUR CODE GOES HERE
@@ -165,17 +170,26 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--lr", type=float, help="learning rate", default=1e-3)
     parser.add_argument("--n_epochs", type=int, help="number of epochs", default=50)
-    parser.add_argument("--batch_size", type=int, help="batch_size", default=256)
+    parser.add_argument("--batch_size", type=int, help="batch_size", default=512)
     parser.add_argument("--n_steering_classes", type=int, help="number of steering classes", default=20)
     parser.add_argument("--train_dir", help="directory of training data", default='./dataset/train')
     parser.add_argument("--validation_dir", help="directory of validation data", default='./dataset/val')
     parser.add_argument("--weights_out_file",
                         help="where to save the weights of the network e.g. ./weights/learner_0.weights",
-                        required=True)
+                        default="./weights/learner_0_supervised_learning.weights")
+
+    # parser.add_argument("--weights_out_file",
+    #                     help="where to save the weights of the network e.g. ./weights/learner_0.weights",
+    #                     required=True)
     parser.add_argument("--weighted_loss", type=str2bool,
                         help="should you weight the labeled examples differently based on their frequency of occurence",
-                        default=False)
+                        default=True)
 
     args = parser.parse_args()
 
-    main(args)
+    if args.weighted_loss:
+        filename = args.weights_out_file.split(".w")[0]
+        args.weights_out_file = f"{filename}_weighted_loss.weights"
+
+    trained_model = main(args)
+    torch.save(trained_model.state_dict(), args.weights_out_file)
