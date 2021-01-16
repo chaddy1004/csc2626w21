@@ -1,9 +1,10 @@
 import torch
+import argparse
 
-
-#DEVICE = torch.device('cpu')
-DEVICE = torch.device('cuda')   
-
+if torch.cuda.device_count() > 0:
+    DEVICE = torch.device('cuda')
+else:
+    DEVICE = torch.device('cpu')
 
 
 def str2bool(v):
