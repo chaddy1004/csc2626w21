@@ -23,6 +23,7 @@ def run(steering_network, args):
 
         state, expert_action, reward, done, _ = env.step(learner_action)
         if done:
+            print(t)
             break
 
         expert_steer = expert_action[0]  # [-1, 1]
