@@ -30,6 +30,16 @@ def train_discrete(model, iterator, opt, args):
     # Compute the cross_entropy loss with and without weights  
     # Compute the derivatives of the loss w.r.t. network parameters
     # Take a step in the approximate gradient direction using the optimizer opt
+    weights = None
+    if args.weighted_loss:
+        args.class_dist[np.nonzero(args.class_dist == 0.0)] = np.max(
+            args.class_dist)  # so we dont get inf for classes with zero occurance
+        weights = np.max(
+            args.class_dist) / args.class_dist  # just inverse makes the weights too big. I wanted to scale it so it doesnt drastically change the learning rate
+        weights = torch.Tensor(weights)
+        if DEVICE.type == 'cuda':
+            weights = weights.cuda()
+    cce_loss = _cce_loss(weight=weights)
 
     for i_batch, batch in enumerate(iterator):
         img_batch, target_cmd_batch = batch['image'], batch['cmd']
@@ -37,18 +47,6 @@ def train_discrete(model, iterator, opt, args):
             img_batch = img_batch.cuda()
             target_cmd_batch = target_cmd_batch.cuda()
         opt.zero_grad()
-        if args.weighted_loss:
-            args.class_dist[np.nonzero(args.class_dist == 0.0)] = np.max(
-                args.class_dist)  # so we dont get inf for classes with zero occurance
-            weights = np.max(
-                args.class_dist) / args.class_dist # just inverse makes the weights too big. I wanted to scale it so it doesnt drastically change the learning rate
-
-            cce_loss = _cce_loss(weight=torch.Tensor(weights))
-        else:
-            cce_loss = _cce_loss(weight=None)
-        #
-        # YOUR CODE GOES HERE
-        #
         pred_cmd_batch = model(img_batch)
         # print(target_cmd_batch.shape, pred_cmd_batch.shape)
         loss = cce_loss(input=pred_cmd_batch, target=target_cmd_batch)
@@ -169,27 +167,29 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--lr", type=float, help="learning rate", default=1e-3)
-    parser.add_argument("--n_epochs", type=int, help="number of epochs", default=50)
+    parser.add_argument("--n_epochs", type=int, help="number of epochs", default=1)
     parser.add_argument("--batch_size", type=int, help="batch_size", default=512)
     parser.add_argument("--n_steering_classes", type=int, help="number of steering classes", default=20)
     parser.add_argument("--train_dir", help="directory of training data", default='./dataset/train')
     parser.add_argument("--validation_dir", help="directory of validation data", default='./dataset/val')
     parser.add_argument("--weights_out_file",
                         help="where to save the weights of the network e.g. ./weights/learner_0.weights",
-                        default="./weights/learner_0_supervised_learning.weights")
+                        default="./weights/epoch_1_learner_0_supervised_learning.weights")
 
     # parser.add_argument("--weights_out_file",
     #                     help="where to save the weights of the network e.g. ./weights/learner_0.weights",
     #                     required=True)
     parser.add_argument("--weighted_loss", type=str2bool,
                         help="should you weight the labeled examples differently based on their frequency of occurence",
-                        default=True)
+                        default=False)
 
     args = parser.parse_args()
 
     if args.weighted_loss:
         filename = args.weights_out_file.split(".w")[0]
         args.weights_out_file = f"{filename}_weighted_loss.weights"
-
+        print("WEIGHTED LOSS SUPERVISED STARTED")
+    else:
+        print("NORMAL SUPERVISED STARTED")
     trained_model = main(args)
     torch.save(trained_model.state_dict(), args.weights_out_file)
