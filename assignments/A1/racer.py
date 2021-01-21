@@ -25,7 +25,6 @@ def run(steering_network, args):
         if done:
             print(t)
             break
-
         expert_steer = expert_action[0]  # [-1, 1]
         expert_gas = expert_action[1]  # [0, 1]
         expert_brake = expert_action[2]  # [0, 1]
@@ -65,6 +64,7 @@ if __name__ == "__main__":
 
     steering_network = DiscreteDrivingPolicy(n_classes=args.n_steering_classes).to(DEVICE)
     if args.learner_weights:
+        print("UAWEH;OEASUGHEA;SOIGHEAS;OGIASH")
         steering_network.load_weights_from(args.learner_weights)
 
     run(steering_network, args)
