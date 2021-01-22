@@ -20,6 +20,8 @@ from matplotlib import pyplot as plt
 import seaborn as sns
 import random
 
+sns.set_theme(style="darkgrid")
+
 torch.manual_seed(2626)
 np.random.seed(19940513)
 random.seed(a=19971124)
@@ -38,8 +40,8 @@ def run(steering_network, run_id, args):
         env.render()
 
         state, expert_action, reward, done, _ = env.step(learner_action)
-        cross_track_error_heading += env.get_cross_track_error(env.car, env.track)[0]  # get the error_heading
-        cross_track_error_dist += env.get_cross_track_error(env.car, env.track)[1]  # get the error_dist
+        cross_track_error_heading += abs(env.get_cross_track_error(env.car, env.track)[0])  # get the error_heading
+        cross_track_error_dist += abs(env.get_cross_track_error(env.car, env.track)[1])  # get the error_dist
         if done:
             print(t)
             duration = t
@@ -148,7 +150,6 @@ if __name__ == "__main__":
     print(f"C.T.E. dist of each run: {cross_track_errors_dist}")
     print(f"C.T.E. heading of each run: {cross_track_errors_heading}")
 
-    cross_track_errors_dist = [i for i in map(lambda x: abs(x), cross_track_errors_dist)]
     x_axis = [i for i in range(len(cross_track_errors_dist))]
     # x_axis_duration = [i for i in range(len(duration))]
 
@@ -158,13 +159,16 @@ if __name__ == "__main__":
     print(experiment)
 
     cte_plot = sns.lineplot(data=experiment, x="DAgger Iteration", y="Dist Error")
-    cte_plot.set_title("Error vs DAgger Iteration")
+    cte_plot.set_title("Dist Error vs DAgger Iteration")
     cte_plot.figure.savefig("DistErrorPlot.png")
+    plt.clf()
 
-    cte_plot = sns.lineplot(data=experiment, x="DAgger Iteration", y="Head Error")
-    cte_plot.set_title("Error vs DAgger Iteration")
-    cte_plot.figure.savefig("HeadingErrorPlot.png")
+    head_plot = sns.lineplot(data=experiment, x="DAgger Iteration", y="Head Error")
+    head_plot.set_title("Heading Error vs DAgger Iteration")
+    head_plot.figure.savefig("HeadingErrorPlot.png")
+    plt.clf()
 
     duration_plot = sns.lineplot(data=experiment, x="DAgger Iteration", y="Simulation Duration")
     duration_plot.set_title("Simulation Duration vs DAgger Iteration")
     duration_plot.figure.savefig("DurationPlot.png")
+    plt.clf()
