@@ -14,13 +14,10 @@ from utils import DEVICE, str2bool
 
 from torch.nn import CrossEntropyLoss
 import random
-torch.manual_seed(2626)
-# np.random.seed(19940513)
-# random.seed(a=19971124)
 
-
-np.random.seed(1313)
-random.seed(a=1)
+torch.manual_seed(3125512)
+np.random.seed(42)
+random.seed(a=400125)
 
 
 def _cce_loss(weight=None):
@@ -61,9 +58,7 @@ def train_discrete(model, iterator, opt, args):
         pred_cmd_batch = model(img_batch)
         # print(target_cmd_batch.shape, pred_cmd_batch.shape)
         loss = cce_loss(input=pred_cmd_batch, target=target_cmd_batch)
-
         loss.backward()
-
         opt.step()
 
         loss_np = loss.detach().cpu().numpy()
@@ -90,29 +85,28 @@ def accuracy(y_pred, y_true):
 
 def test_discrete(model, iterator, opt, args):
     model.train()
-
     acc_hist = []
+    with torch.no_grad():
+        for i_batch, batch in enumerate(iterator):
+            x = batch['image']
+            y = batch['cmd']
 
-    for i_batch, batch in enumerate(iterator):
-        x = batch['image']
-        y = batch['cmd']
+            x = x.to(DEVICE)
+            y = y.to(DEVICE)
 
-        x = x.to(DEVICE)
-        y = y.to(DEVICE)
+            logits = model(x)
+            y_pred = F.softmax(logits, 1)
 
-        logits = model(x)
-        y_pred = F.softmax(logits, 1)
+            acc = accuracy(y_pred, y)
+            acc = acc.detach().cpu().numpy()
+            acc_hist.append(acc)
 
-        acc = accuracy(y_pred, y)
-        acc = acc.detach().cpu().numpy()
-        acc_hist.append(acc)
+        avg_acc = np.asarray(acc_hist).mean()
 
-    avg_acc = np.asarray(acc_hist).mean()
-
-    print('\tVal: \tAcc: {}%  Time: {:10.3f}'.format(
-        avg_acc,
-        time.time() - args.start_time,
-    ))
+        print('\tVal: \tAcc: {}%  Time: {:10.3f}'.format(
+            avg_acc,
+            time.time() - args.start_time,
+        ))
 
     return avg_acc
 
@@ -142,8 +136,8 @@ def main(args):
                                         classes=args.n_steering_classes,
                                         transform=data_transform)
 
-    training_iterator = DataLoader(training_dataset, batch_size=args.batch_size, shuffle=True, num_workers=0)
-    validation_iterator = DataLoader(validation_dataset, batch_size=args.batch_size, shuffle=True, num_workers=0)
+    training_iterator = DataLoader(training_dataset, batch_size=args.batch_size, shuffle=True, num_workers=5)
+    validation_iterator = DataLoader(validation_dataset, batch_size=args.batch_size, shuffle=True, num_workers=5)
     driving_policy = DiscreteDrivingPolicy(n_classes=args.n_steering_classes).to(DEVICE)
 
     opt = torch.optim.Adam(driving_policy.parameters(), lr=args.lr)
@@ -156,13 +150,15 @@ def main(args):
     args.class_dist = get_class_distribution(training_iterator, args)
     print(args.class_dist)
 
-    best_val_accuracy = 0
 
     opt = torch.optim.Adam(params=driving_policy.parameters(), lr=args.lr)
+    best_acc = -1
     for epoch in range(args.n_epochs):
         print('EPOCH ', epoch)
         train_discrete(model=driving_policy, iterator=training_iterator, opt=opt, args=args)
-        test_discrete(model=driving_policy, iterator=validation_iterator, args=args, opt=None)
+        avg_acc = test_discrete(model=driving_policy, iterator=validation_iterator, args=args, opt=None)
+        if avg_acc > best_acc:
+            torch.save(driving_policy.state_dict(), args.weights_out_file)
 
         #
         # YOUR CODE GOES HERE
@@ -185,7 +181,7 @@ if __name__ == "__main__":
     parser.add_argument("--validation_dir", help="directory of validation data", default='./dataset_1/val')
     parser.add_argument("--weights_out_file",
                         help="where to save the weights of the network e.g. ./weights/learner_0.weights",
-                        default="./weights/0120_learner_0_supervised_learning.weights")
+                        default="./weights/0121_learner_0_supervised_learning.weights")
     parser.add_argument("--weighted_loss", type=str2bool,
                         help="should you weight the labeled examples differently based on their frequency of occurrence",
                         default=True)
@@ -199,4 +195,3 @@ if __name__ == "__main__":
     else:
         print("NORMAL SUPERVISED STARTED")
     trained_model = main(args)
-    torch.save(trained_model.state_dict(), args.weights_out_file)
