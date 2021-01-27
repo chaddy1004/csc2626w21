@@ -37,26 +37,28 @@ def train_discrete(model, iterator, opt, args):
     # Take a step in the approximate gradient direction using the optimizer opt
     weights = None
     if args.weighted_loss:
-        args.class_dist[np.nonzero(args.class_dist == 0.0)] = np.max(
-            args.class_dist)  # so we dont get inf for classes with zero occurrence
-        weights = np.max(
-            args.class_dist) / args.class_dist  # just inverse makes the weights too big. I wanted to scale it so it doesnt drastically change the learning rate
+        # I replaced all classes with zero frequency to the highest frequency
+        # this way, when I take the inverse of the frequencies, their weights will become 1
+        # classes with zero occurrences  get no effect of the weight anyway
+        args.class_dist[np.nonzero(args.class_dist == 0.0)] = np.max(args.class_dist)
+        # just inverse makes the weights too big. I wanted to scale it so it doesnt drastically change the learning rate
+        weights = np.max(args.class_dist) / args.class_dist
         weights = torch.Tensor(weights)
         if DEVICE.type == 'cuda':
             weights = weights.cuda()
-    print(args.weighted_loss)
+    # define cross entropy loss with the given weights (None for none-weighted training)
     cce_loss = _cce_loss(weight=weights)
     # print(args.class_dist)
     # print(weights)
 
     for i_batch, batch in enumerate(iterator):
+        # get input images and ground truth command from each batch
         img_batch, target_cmd_batch = batch['image'], batch['cmd']
         if DEVICE.type == 'cuda':
             img_batch = img_batch.cuda()
             target_cmd_batch = target_cmd_batch.cuda()
         opt.zero_grad()
         pred_cmd_batch = model(img_batch)
-        # print(target_cmd_batch.shape, pred_cmd_batch.shape)
         loss = cce_loss(input=pred_cmd_batch, target=target_cmd_batch)
         loss.backward()
         opt.step()
@@ -64,6 +66,7 @@ def train_discrete(model, iterator, opt, args):
         loss_np = loss.detach().cpu().numpy()
         loss_hist.append(loss_np)
 
+        # I changed the print interval to 1. I personally like having print statements every step just so I can see my progress
         # PRINT_INTERVAL = int(len(iterator) / 3)
         PRINT_INTERVAL = 1
         if (i_batch + 1) % PRINT_INTERVAL == 0:
@@ -150,23 +153,21 @@ def main(args):
     args.class_dist = get_class_distribution(training_iterator, args)
     print(args.class_dist)
 
-
     opt = torch.optim.Adam(params=driving_policy.parameters(), lr=args.lr)
     best_acc = -1
     for epoch in range(args.n_epochs):
-        print('EPOCH ', epoch)
-        train_discrete(model=driving_policy, iterator=training_iterator, opt=opt, args=args)
-        avg_acc = test_discrete(model=driving_policy, iterator=validation_iterator, args=args, opt=None)
-        if avg_acc > best_acc:
-            torch.save(driving_policy.state_dict(), args.weights_out_file)
-
         #
         # YOUR CODE GOES HERE
         #
 
         # Train the driving policy
         # Evaluate the driving policy on the validation set
-        # If the accuracy on the validation set is a new high then save the network weights 
+        # If the accuracy on the validation set is a new high then save the network weights
+        print('EPOCH ', epoch)
+        train_discrete(model=driving_policy, iterator=training_iterator, opt=opt, args=args)
+        avg_acc = test_discrete(model=driving_policy, iterator=validation_iterator, args=args, opt=None)
+        if avg_acc > best_acc:
+            torch.save(driving_policy.state_dict(), args.weights_out_file)
 
     return driving_policy
 
@@ -188,6 +189,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    #  save weights as different name per experiment type
     if args.weighted_loss:
         filename = args.weights_out_file.split(".w")[0]
         args.weights_out_file = f"{filename}_weighted_loss.weights"
